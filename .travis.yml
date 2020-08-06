@@ -70,6 +70,7 @@ env:
     - NO_AT_BRIDGE=1  # Necessary for GTK3 interactive test.
     - OPENBLAS_NUM_THREADS=1
     - PYTHONFAULTHANDLER=1
+    - XVFB=""
 
 matrix:
   include:
@@ -78,16 +79,34 @@ matrix:
         - PINNEDVERS='-c requirements/testing/minver.txt'
         - DELETE_FONT_CACHE=1
     - python: 3.7
+      arch: arm64
+      env:
+        - PINNEDVERS='-c requirements/testing/minver.txt'
+        - DELETE_FONT_CACHE=1
+        - PIP_NO_CACHE_DIR=off
+        - XVFB=xvfb-run
+    - python: 3.7
       env:
         - EXTRAREQS='-r requirements/testing/travis_extra.txt'
+    - python: 3.7
+      arch: arm64
+      env:
+        - EXTRAREQS='-r requirements/testing/travis_arm64_extra.txt'
+        - PIP_NO_CACHE_DIR=off
+        - XVFB=xvfb-run
     - python: 3.8
       env:
         - EXTRAREQS='-r requirements/testing/travis_extra.txt'
+    - python: 3.8
+      arch: arm64
+      env:
+        - EXTRAREQS='-r requirements/testing/travis_arm64_extra.txt'
+        - PIP_NO_CACHE_DIR=off
+        - XVFB=xvfb-run
     - python: "nightly"
       env:
         - PRE=--pre
     - os: osx
-      osx_image: xcode9
       language: generic  # https://github.com/travis-ci/travis-ci/issues/2312
       only: master
       cache:
@@ -102,15 +121,26 @@ matrix:
   allow_failures:
     - python: "nightly"
 
-before_install:
-- |
-  # Install OS dependencies and set up ccache
+before_install: |
   case "$TRAVIS_OS_NAME" in
   linux)
     export PATH=/usr/lib/ccache:$PATH
     ;;
   osx)
-    ci/osx-deps
+    set -e
+    ci/silence brew update
+    brew uninstall numpy gdal postgis
+    brew unlink python@2
+    brew install python || brew upgrade python
+    brew install ffmpeg imagemagick mplayer ccache
+    hash -r
+    which python
+    python --version
+    set +e
+    # We could install ghostscript and inkscape here to test svg and pdf
+    # but this makes the test time really long.
+    # brew install ghostscript inkscape
+    export PATH=/usr/local/opt/python/libexec/bin:/usr/local/opt/ccache/libexec:$PATH
     ;;
   esac
 
@@ -121,6 +151,10 @@ install:
     git describe
     # Upgrade pip and setuptools and wheel to get as clean an install as possible.
     python -mpip install --upgrade pip setuptools wheel
+  - |
+    if [[ "${TRAVIS_CPU_ARCH}" == "arm64" ]]; then
+      sudo apt-get install -y xvfb python3-tk imagemagick;
+    fi
   - |
     # Install dependencies from PyPI.
     python -mpip install --upgrade $PRE -r requirements/testing/travis_all.txt $EXTRAREQS $PINNEDVERS
@@ -159,7 +193,7 @@ install:
       export CPPFLAGS=--coverage
     fi
   - |
-    python -mpip install -e .  # Install Matplotlib.
+    python -mpip install -ve .  # Install Matplotlib.
   - |
     if [[ $TRAVIS_OS_NAME != 'osx' ]]; then
       unset CPPFLAGS
@@ -174,10 +208,10 @@ script:
   # Each script we want to run need to go in its own section and the program
   # you want to fail travis needs to be the last thing called.
   - |
-    # The number of processes is hardcoded (-n2), because using too many
+    # The number of processes is hardcoded (-n4), because using too many
     # causes the Travis VM to run out of memory (since so many copies of
     # inkscape and ghostscript are running at the same time).
-    python -mpytest -raR --maxfail=50 --timeout=300 --durations=25 --cov-report= --cov=lib -n2 --log-level=DEBUG
+    $XVFB python -mpytest -raR --maxfail=50 --timeout=300 --durations=25 --cov-report= --cov=lib -n4 --log-level=DEBUG
 
 before_cache: |
   rm -rf $HOME/.cache/matplotlib/tex.cache
